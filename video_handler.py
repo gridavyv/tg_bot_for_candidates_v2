@@ -72,6 +72,8 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE, ask_t
     context.user_data["pending_file_id"] = file_id
     context.user_data["pending_kind"] = kind
     context.user_data["pending_duration"] = duration
+    # Clear any previous confirmation processing flag
+    context.user_data.pop("video_confirmation_processed", None)
 
     # Log that user sent a video
     video_info = {
@@ -109,8 +111,10 @@ async def download_video_locally(tg_file, user_id: int, kind: str = "video", bot
         if local_path.exists():
             return str(local_path)
         else:
+            print(f"ERROR: Video file was not created at {local_path}")
             return ""
     except Exception as e:
+        print(f"ERROR: Failed to download video: {str(e)}")
         return ""
 
 
@@ -122,11 +126,24 @@ async def handle_video_confirmation(update: Update, context: ContextTypes.DEFAUL
     action = query.data
     file_id = context.user_data.get("pending_file_id")
     
+    print(f"DEBUG: handle_video_confirmation called with action={action}, file_id={file_id}, bot_type={bot_type}")
+    
+    # Check if we've already processed this confirmation
+    if context.user_data.get("video_confirmation_processed"):
+        print("DEBUG: Video confirmation already processed, skipping")
+        return
+    
     # Log user's answer about confirming sending
     log_answered_confirm_sending(update, context, action)
     
     if action in ["confirm_yes", "privacy_confirm_yes"]:
+        print(f"DEBUG: Processing video confirmation for action={action}")
+        
+        # Mark as processed to prevent duplicate processing
+        context.user_data["video_confirmation_processed"] = True
+        
         if not file_id:
+            print("DEBUG: No file_id found in user_data")
             if query.message:
                 await query.message.reply_text("Нет видео для сохранения. Пришли заново, пожалуйста.")
             else:
@@ -134,12 +151,23 @@ async def handle_video_confirmation(update: Update, context: ContextTypes.DEFAUL
             return
 
         # Download video to local storage
+        print(f"DEBUG: Starting video download for file_id={file_id}")
         tg_file = await context.bot.get_file(file_id)
         kind = context.user_data.get("pending_kind", "video")
+        print(f"DEBUG: Video kind={kind}, user_id={query.from_user.id}")
         local_path = await download_video_locally(tg_file, query.from_user.id, kind, bot_type)
+        print(f"DEBUG: Download result: local_path={local_path}")
         
         if not local_path:
-            await query.edit_message_text("Ошибка при скачивании видео. Пришли заново, пожалуйста.")
+            error_msg = "Ошибка при скачивании видео. Пришли заново, пожалуйста."
+            try:
+                await query.edit_message_text(error_msg)
+            except Exception:
+                # Fallback: send new message if edit fails
+                if query.message:
+                    await query.message.reply_text(error_msg)
+                else:
+                    await context.bot.send_message(chat_id=query.from_user.id, text=error_msg)
             return
         
         # Clear pending data
@@ -147,10 +175,23 @@ async def handle_video_confirmation(update: Update, context: ContextTypes.DEFAUL
         context.user_data.pop("pending_kind", None)
         context.user_data.pop("pending_duration", None)
 
-        if query.message:
-            await query.message.reply_text(VIDEO_SAVED_TEXT)
-        else:
-            await context.bot.send_message(chat_id=query.from_user.id, text=VIDEO_SAVED_TEXT)
+        print(f"DEBUG: Video successfully saved to {local_path}, sending success message")
+        
+        # Send success message with better error handling
+        try:
+            if query.message:
+                await query.message.reply_text(VIDEO_SAVED_TEXT)
+            else:
+                await context.bot.send_message(chat_id=query.from_user.id, text=VIDEO_SAVED_TEXT)
+            print("DEBUG: Success message sent successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to send success message: {str(e)}")
+            # Try alternative method
+            try:
+                await context.bot.send_message(chat_id=query.from_user.id, text=VIDEO_SAVED_TEXT)
+                print("DEBUG: Success message sent via alternative method")
+            except Exception as e2:
+                print(f"ERROR: Alternative success message also failed: {str(e2)}")
     else:
         # Clear pending data
         context.user_data.pop("pending_file_id", None)

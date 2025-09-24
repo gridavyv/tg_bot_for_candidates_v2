@@ -251,21 +251,39 @@ async def feedback_privacy_confirmation(update: Update, context: ContextTypes.DE
     query = update.callback_query
     await query.answer()
     
+    print(f"DEBUG: feedback_privacy_confirmation called with query.data={query.data}")
+    
     # Log user's answer about privacy confirmation
     answer = "yes" if query.data == "privacy_confirm_yes" else "no"
     log_answered_confirm_privacy(update, context, answer)
     
     if query.data == "privacy_confirm_yes":
         # User agreed to privacy policy, proceed with video download
+        print("DEBUG: User confirmed privacy policy, calling handle_video_confirmation")
         await handle_video_confirmation(update, context, bot_type="applicant")
     elif query.data == "privacy_confirm_no":
         # User declined privacy policy, ask why they're hesitant
+        print("DEBUG: User declined privacy policy, asking why hesitant")
         await ask_why_hesitant_or_reject_to_shoot_video(update, context)
 
 
 async def feedback_to_confirm_sending(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle video confirmation using shared video handler"""
-    await handle_video_confirmation(update, context, bot_type="applicant")
+    """Handle video confirmation when user clicks No"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Log user's answer about confirming sending
+    log_answered_confirm_sending(update, context, query.data)
+    
+    # Clear pending data since user declined
+    context.user_data.pop("pending_file_id", None)
+    context.user_data.pop("pending_kind", None)
+    context.user_data.pop("pending_duration", None)
+    
+    if query.message:
+        await query.message.reply_text("Хорошо, запиши новое видео и пришли его сюда, пожалуйста.")
+    else:
+        await context.bot.send_message(chat_id=query.from_user.id, text="Хорошо, запиши новое видео и пришли его сюда, пожалуйста.")
 
 
 async def feedback_about_watched_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
